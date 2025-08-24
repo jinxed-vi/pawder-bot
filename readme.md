@@ -12,7 +12,7 @@ Add your bot token to your environment
 
 ```bash
 # cd into the project's folder
-cd virtual-pet/
+cd pawder-bot/
 
 export TOKEN="YOUR_DISCORD_TOKEN"
 # Alternatively, using a .env file
