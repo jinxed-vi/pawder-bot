@@ -1,4 +1,3 @@
-# cogs/admin.py
 import discord
 from discord.ext import commands
 from database import get_db_cursor, fetch_shop_item
