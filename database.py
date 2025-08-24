@@ -36,3 +36,50 @@ def setup_database():
         columns = [column[1] for column in cur.fetchall()]
         if 'last_prize' not in columns:
             cur.execute("ALTER TABLE pets ADD COLUMN last_prize TEXT")
+            # Add the new willpower column if it doesn't exist
+        if 'willpower' not in columns:
+            # We add a default value of 100 for existing pets
+            cur.execute("ALTER TABLE pets ADD COLUMN willpower INTEGER NOT NULL DEFAULT 100")
+
+def fetch_pet(user_id):
+    """Fetches a single pet's data from the database."""
+    with get_db_cursor() as cur:
+        cur.execute("SELECT * FROM pets WHERE user_id = ?", (user_id,))
+        return cur.fetchone()
+
+def modify_pet_stat(user_id, stat_name, amount, mode='add'):
+    """
+    Modifies a pet's stat securely.
+    - user_id: The ID of the user whose pet to modify.
+    - stat_name: The name of the column/stat to change.
+    - amount: The number to add or set.
+    - mode: 'add' (default) or 'set'.
+    Returns the new value of the stat, or None if the pet doesn't exist.
+    """
+    # Whitelist of valid stats to prevent SQL injection
+    valid_stats = ['hunger', 'happiness', 'cleanliness', 'money', 'willpower']
+    if stat_name not in valid_stats:
+        raise ValueError(f"Invalid stat name: {stat_name}")
+
+    with get_db_cursor() as cur:
+        # First, check if the pet exists
+        cur.execute("SELECT 1 FROM pets WHERE user_id = ?", (user_id,))
+        if not cur.fetchone():
+            return None
+
+        if mode == 'add':
+            # Cap stats between 0 and 100, but not money
+            if stat_name != 'money':
+                query = f"UPDATE pets SET {stat_name} = MIN(100, MAX(0, {stat_name} + ?)) WHERE user_id = ?"
+            else: # Money has no upper cap
+                query = "UPDATE pets SET money = money + ? WHERE user_id = ?"
+            cur.execute(query, (amount, user_id))
+        
+        elif mode == 'set':
+            query = f"UPDATE pets SET {stat_name} = ? WHERE user_id = ?"
+            cur.execute(query, (amount, user_id))
+        
+        # Return the new value of the stat
+        cur.execute(f"SELECT {stat_name} FROM pets WHERE user_id = ?", (user_id,))
+        new_value = cur.fetchone()[stat_name]
+        return new_value

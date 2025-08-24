@@ -6,7 +6,7 @@ import random
 from collections import Counter
 
 # Import our database context manager
-from database import get_db_cursor
+from database import fetch_pet, get_db_cursor, modify_pet_stat
 
 # Define constants here
 SHOP_ITEMS = { "apple": {"name": "Apple 🍎", "price": 10, "description": "Restores 25 hunger.", "effect": {"stat": "hunger", "value": 25}}, "bread": {"name": "Bread 🍞", "price": 20, "description": "Restores 40 hunger.", "effect": {"stat": "hunger", "value": 40}}, "toy": {"name": "Squeaky Toy 🧸", "price": 30, "description": "Restores 35 happiness.", "effect": {"stat": "happiness", "value": 35}}, "soap": {"name": "Soap Bar 🧼", "price": 15, "description": "Restores 50 cleanliness.", "effect": {"stat": "cleanliness", "value": 50}}}
@@ -15,26 +15,50 @@ PRIZE_ITEMS = ("apple", "bread", "toy", "soap")
 class PetCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.stat_decay_loop.start() # Start the background task
+        self.stat_decay_loop.start() 
 
-    # The background task is now part of the Cog
     @tasks.loop(minutes=5)
     async def stat_decay_loop(self):
         with get_db_cursor() as cur:
+            # Step 1: Regular stat decay for all pets
             cur.execute('''
                 UPDATE pets SET 
                     hunger = MAX(0, hunger - 2), 
                     happiness = MAX(0, happiness - 1), 
                     cleanliness = MAX(0, cleanliness - 3)
             ''')
-        print("Database stat decay loop has run.")
+
+            # Step 2: Decrease Willpower for neglected pets (stats at 0)
+            cur.execute('''
+                UPDATE pets SET willpower = MAX(0, willpower - 5)
+                WHERE hunger = 0 OR happiness = 0 OR cleanliness = 0
+            ''')
+
+            # Step 3: Find any pets whose willpower has hit 0
+            cur.execute("SELECT user_id, name FROM pets WHERE willpower <= 0")
+            pets_to_remove = cur.fetchall()
+
+            for pet in pets_to_remove:
+                user_id = pet['user_id']
+                pet_name = pet['name']
+
+                # Step 4: Delete the pet and its inventory
+                cur.execute("DELETE FROM pets WHERE user_id = ?", (user_id,))
+                cur.execute("DELETE FROM inventory WHERE owner_id = ?", (user_id,))
+
+                # Step 5: Try to send a DM to the user
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                    await user.send(f"You neglected your pet, **{pet_name}**, for too long. It has lost all its Willpower and run away. 😥")
+                except discord.HTTPException:
+                    print(f"Failed to send DM to user {user_id}. They might have DMs disabled.")
+        
+        print("Database stat decay and neglect loop has run.")
         
     @stat_decay_loop.before_loop
     async def before_stat_decay_loop(self):
         await self.bot.wait_until_ready() # Wait for the bot to be ready
 
-    # All commands are now defined with @commands.command()
-    # and take 'self' as the first argument
     @commands.command(name='hatch')
     async def hatch_pet(self, ctx):
         user_id = ctx.author.id
@@ -43,9 +67,9 @@ class PetCommands(commands.Cog):
             if cur.fetchone():
                 await ctx.send("You already have a pet!")
             else:
-                cur.execute("INSERT INTO pets (user_id, name, born_at, hunger, happiness, cleanliness, money) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (user_id, 'Pet', datetime.datetime.now().isoformat(), 100, 100, 100, 10))
-                await ctx.send(f"Congratulations, {ctx.author.display_name}! You've hatched a new pet! 🎉 Use `!name <name>` to name it!")
+                cur.execute("INSERT INTO pets (user_id, name, born_at, hunger, happiness, cleanliness, money, willpower) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (user_id, 'Pet', datetime.datetime.now().isoformat(), 100, 100, 100, 10, 100))
+                await ctx.send(f"Congratulations, {ctx.author.display_name}! You've hatched a new pet! 🎉")
 
     @commands.command(name='name')
     async def name_pet(self, ctx, *, new_name: str = None):
@@ -69,9 +93,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='status')
     async def check_status(self, ctx ):
-        with get_db_cursor() as cur:
-            cur.execute("SELECT * FROM pets WHERE user_id = ?", (user_id,))
-            pet = cur.fetchone()
+        pet = fetch_pet(ctx.author.id)
 
         if not pet:
             await ctx.send("You don't have a pet yet! Type `!hatch` to get one.")
@@ -84,59 +106,49 @@ class PetCommands(commands.Cog):
         minutes, seconds = divmod(remainder, 60)
         
         embed = discord.Embed(title=f"{pet['name']}'s Status", color=discord.Color.blue())
+        embed.add_field(name="💪 Willpower", value=f"{pet['willpower']}/100", inline=True)
         embed.add_field(name="❤️ Happiness", value=f"{pet['happiness']}/100", inline=True)
         embed.add_field(name="🍔 Hunger", value=f"{pet['hunger']}/100", inline=True)
         embed.add_field(name="✨ Cleanliness", value=f"{pet['cleanliness']}/100", inline=True)
         embed.add_field(name="💰 Coins", value=pet['money'], inline=True)
-        embed.add_field(name="🎂 Age", value=f"{hours}h {minutes}m {seconds}s", inline=True)
-        
+        embed.add_field(name="🎂 Age", value=f"{hours}h {minutes}m", inline=True)
         await ctx.send(embed=embed)
 
     @commands.command(name='feed')
-    async def feed_pet(self, ctx ):
+    async def feed_pet(self, ctx):
         user_id = ctx.author.id
-        
-        with get_db_cursor() as cur:
-            cur.execute("UPDATE pets SET hunger = MIN(100, hunger + 15) WHERE user_id = ?", (user_id,))
+        new_hunger = modify_pet_stat(user_id, 'hunger', 15)
+        if new_hunger is None:
+            await ctx.send("You don't have a pet to feed!")
+            return
             
-            if cur.rowcount == 0:
-                await ctx.send("You don't have a pet to feed! Use `!hatch` first.")
-            else:
-                cur.execute("SELECT hunger FROM pets WHERE user_id = ?", (user_id,))
-                new_hunger = cur.fetchone()[0]
-                await ctx.send(f"You fed your pet! 🍔 Its hunger is now {new_hunger}/100.")
-
+        modify_pet_stat(user_id, 'willpower', 1)
+        await ctx.send(f"You fed your pet! 🍔 Its hunger is now {new_hunger}/100.")
+    
     @commands.command(name='play')
-    async def play_with_pet(self, ctx ):
+    async def play_with_pet(self, ctx):
         user_id = ctx.author.id
         money_earned = random.randint(5, 15)
-        
-        with get_db_cursor() as cur:
-            cur.execute('''
-                UPDATE pets 
-                SET 
-                    happiness = MIN(100, happiness + 20), 
-                    money = money + ?
-                WHERE user_id = ?
-            ''', (money_earned, user_id))
-            
-            if cur.rowcount == 0:
-                await ctx.send("You don't have a pet to play with! Use `!hatch` first.")
-            else:
-                cur.execute("SELECT happiness FROM pets WHERE user_id = ?", (user_id,))
-                new_happiness = cur.fetchone()[0]
-                await ctx.send(f"You played with your pet! ❤️ Its happiness is now {new_happiness}/100. You also earned {money_earned} coins! 💰")
 
+        new_happiness = modify_pet_stat(user_id, 'happiness', 20)
+        if new_happiness is None:
+            await ctx.send("You don't have a pet to play with!")
+            return
+
+        modify_pet_stat(user_id, 'money', money_earned)
+        modify_pet_stat(user_id, 'willpower', 1)
+        await ctx.send(f"You played with your pet! ❤️ Its happiness is now {new_happiness}/100. You also earned {money_earned} coins! 💰")
+    
     @commands.command(name='clean')
-    async def clean_pet(self, ctx ):
+    async def clean_pet(self, ctx):
         user_id = ctx.author.id
-        with get_db_cursor() as cur:
-            cur.execute("UPDATE pets SET cleanliness = 100 WHERE user_id = ?", (user_id,))
-            
-            if cur.rowcount == 0:
-                await ctx.send("You don't have a pet to clean! Use `!hatch` first.")
-            else:
-                await ctx.send("You cleaned your pet! ✨ It's sparkling clean now.")
+        # Use the new 'set' mode
+        result = modify_pet_stat(user_id, 'cleanliness', 100, mode='set')
+        if result is None:
+            await ctx.send("You don't have a pet to clean!")
+        else:
+            modify_pet_stat(user_id, 'willpower', 1)
+            await ctx.send("You cleaned your pet! ✨ It's sparkling clean now.")
 
     @commands.command(name='shop')
     async def show_shop(self, ctx ):
@@ -160,24 +172,20 @@ class PetCommands(commands.Cog):
         user_id = ctx.author.id
         item = SHOP_ITEMS[item_id]
         
-        with get_db_cursor() as cur:
-            cur.execute("SELECT money FROM pets WHERE user_id = ?", (user_id,))
-            pet = cur.fetchone()
-            
-            if not pet:
-                await ctx.send("You need to hatch a pet first with `!hatch`.")
-                return
-                
-            if pet['money'] < item['price']:
-                await ctx.send(f"You don't have enough money! You need {item['price']} coins but only have {pet['money']}.")
-                return
+        pet = fetch_pet(user_id)
+        if not pet:
+            await ctx.send("You need to hatch a pet first!")
+            return
+        if pet['money'] < item['price']:
+            await ctx.send(f"You don't have enough money! You need {item['price']} coins but only have {pet['money']}.")
+            return
 
-            # Subtract money and add item to inventory
-            new_money = pet['money'] - item['price']
-            cur.execute("UPDATE pets SET money = ? WHERE user_id = ?", (new_money, user_id))
+        # Perform the transaction
+        modify_pet_stat(user_id, 'money', -item['price']) # Subtract money
+        with get_db_cursor() as cur: # We still need this for inventory
             cur.execute("INSERT INTO inventory (owner_id, item_id) VALUES (?, ?)", (user_id, item_id))
-            
-            await ctx.send(f"You bought a {item['name']}! It has been added to your inventory. Use `!use {item_id}` to use it.")
+
+        await ctx.send(f"You bought a {item['name']}! It's in your inventory.")
 
     @commands.command(name='inventory', aliases=['inv'])
     async def show_inventory(self, ctx ):
@@ -222,28 +230,16 @@ class PetCommands(commands.Cog):
 
         user_id = ctx.author.id
         item_effect = SHOP_ITEMS[item_id]['effect']
+        
+        # Apply the stat change using the new function
+        new_stat_value = modify_pet_stat(user_id, item_effect['stat'], item_effect['value'])
+        modify_pet_stat(user_id, 'willpower', 2) # Willpower bonus for using items
+
+        # Remove item from inventory
         with get_db_cursor() as cur:
-            # Check if the user has the item
-            cur.execute("SELECT entry_id FROM inventory WHERE owner_id = ? AND item_id = ?", (user_id, item_id))
-            item_to_use = cur.fetchone()
-            
-            if not item_to_use:
-                await ctx.send(f"You don't have a {SHOP_ITEMS[item_id]['name']} in your inventory.")
-                return
-
-            # Apply the effect
-            stat_to_change = item_effect['stat']
-            value_to_add = item_effect['value']
-            
-            cur.execute(f"UPDATE pets SET {stat_to_change} = MIN(100, {stat_to_change} + ?) WHERE user_id = ?", (value_to_add, user_id))
-            
-            # Remove the item from inventory (using its unique entry_id)
-            cur.execute("DELETE FROM inventory WHERE entry_id = ?", (item_to_use[0],))
-            
-            cur.execute(f"SELECT {stat_to_change} FROM pets WHERE user_id = ?", (user_id,))
-            new_stat_value = cur.fetchone()[0]
-
-            await ctx.send(f"You used a {SHOP_ITEMS[item_id]['name']}! Your pet's {stat_to_change} is now {new_stat_value}/100.")
+             cur.execute("DELETE FROM inventory WHERE owner_id = ? AND item_id = ? LIMIT 1", (user_id, item_id))
+        
+        await ctx.send(f"You used a {SHOP_ITEMS[item_id]['name']}! Your pet's {item_effect['stat']} is now {new_stat_value}/100.")
 
     @commands.command(name='prize')
     async def claim_prize(self, ctx ):
