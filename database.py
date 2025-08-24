@@ -4,6 +4,13 @@ from contextlib import contextmanager
 
 DB_FILE = "pets.db"
 
+INITIAL_SHOP_ITEMS = {
+    "apple": {"name": "Apple 🍎", "price": 10, "description": "Restores 25 hunger.", "effect_stat": "hunger", "effect_value": 25},
+    "bread": {"name": "Bread 🍞", "price": 20, "description": "Restores 40 hunger.", "effect_stat": "hunger", "effect_value": 40},
+    "toy": {"name": "Squeaky Toy 🧸", "price": 30, "description": "Restores 35 happiness.", "effect_stat": "happiness", "effect_value": 35},
+    "soap": {"name": "Soap Bar 🧼", "price": 15, "description": "Restores 50 cleanliness.", "effect_stat": "cleanliness", "effect_value": 50}
+}
+
 @contextmanager
 def get_db_cursor():
     """A context manager to handle database connection and transactions."""
@@ -32,6 +39,30 @@ def setup_database():
                 owner_id INTEGER NOT NULL, item_id TEXT NOT NULL
             )
         ''')
+        
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS shop (
+                item_id TEXT PRIMARY KEY, name TEXT NOT NULL, price INTEGER NOT NULL,
+                description TEXT NOT NULL, effect_stat TEXT NOT NULL, effect_value INTEGER NOT NULL,
+                is_visible INTEGER NOT NULL DEFAULT 1
+            )
+        ''')
+        
+        # One-time migration: Check if the shop table is empty
+        cur.execute("SELECT COUNT(*) FROM shop")
+        if cur.fetchone()[0] == 0:
+            print("Shop table is empty, populating with initial items...")
+            for item_id, details in INITIAL_SHOP_ITEMS.items():
+                cur.execute("INSERT INTO shop VALUES (?, ?, ?, ?, ?, ?)",
+                            (item_id, details['name'], details['price'], details['description'], 
+                             details['effect_stat'], details['effect_value']))
+        
+        # --- Schema migration ---
+        cur.execute("PRAGMA table_info(shop)")
+        columns = [column[1] for column in cur.fetchall()]
+        if 'is_visible' not in columns:
+            cur.execute("ALTER TABLE shop ADD COLUMN is_visible INTEGER NOT NULL DEFAULT 1")
+        
         cur.execute("PRAGMA table_info(pets)")
         columns = [column[1] for column in cur.fetchall()]
         if 'last_prize' not in columns:
@@ -48,7 +79,7 @@ def setup_database():
             cur.execute("ALTER TABLE pets ADD COLUMN last_feed TEXT")
         if 'last_clean' not in columns:
             cur.execute("ALTER TABLE pets ADD COLUMN last_clean TEXT")
-
+            
 
 def fetch_pet(user_id):
     """Fetches a single pet's data from the database."""
@@ -92,3 +123,15 @@ def modify_pet_stat(user_id, stat_name, amount, mode='add'):
         cur.execute(f"SELECT {stat_name} FROM pets WHERE user_id = ?", (user_id,))
         new_value = cur.fetchone()[stat_name]
         return new_value
+
+def fetch_all_shop_items():
+    """Fetches all items from the shop table."""
+    with get_db_cursor() as cur:
+        cur.execute("SELECT * FROM shop ORDER BY price ASC")
+        return cur.fetchall()
+
+def fetch_shop_item(item_id: str):
+    """Fetches a single item from the shop table."""
+    with get_db_cursor() as cur:
+        cur.execute("SELECT * FROM shop WHERE item_id = ?", (item_id,))
+        return cur.fetchone()

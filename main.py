@@ -21,16 +21,17 @@ class PetBot(commands.Bot):
 
     # This is the new, correct way to load cogs
     async def setup_hook(self):
-        await self.load_extension('commands')
+        # This loop automatically finds and loads all cog files
+        for filename in os.listdir('./cogs'):
+            if filename.endswith('.py'):
+                await self.load_extension(f'cogs.{filename[:-3]}')
+                print(f"Loaded cog: {filename}")
 
     async def on_ready(self):
         print(f'Logged in as {self.user.name}')
         print(f'Bot is ready and running in {len(self.guilds)} servers.')
         print('--------------------------------')
 
-# Create an instance of our bot
 bot = PetBot()
-
-# Run the setup and the bot
 setup_database()
 bot.run(TOKEN)
