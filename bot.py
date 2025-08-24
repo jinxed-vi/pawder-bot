@@ -31,6 +31,7 @@ def setup_database():
 # --- Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- Shop ---
@@ -78,7 +79,7 @@ async def on_ready():
     stat_decay_loop.start()
 
 # --- Bot Commands ---
-
+# ... (hatch, name, status, feed, play, clean commands are unchanged) ...
 @bot.command(name='hatch')
 async def hatch_pet(ctx):
     user_id = ctx.author.id
@@ -96,17 +97,14 @@ async def hatch_pet(ctx):
     con.commit()
     con.close()
 
-# --- NEW COMMAND ---
 @bot.command(name='name')
 async def name_pet(ctx, *, new_name: str = None):
-    """Names or renames your pet."""
     user_id = ctx.author.id
     
     if new_name is None:
         await ctx.send("You need to provide a name! Usage: `!name <your_pet_name>`")
         return
         
-    # Basic validation for the name
     if not (0 < len(new_name) <= 25):
         await ctx.send("The name must be between 1 and 25 characters long.")
         return
@@ -114,7 +112,6 @@ async def name_pet(ctx, *, new_name: str = None):
     con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
     
-    # The SQL query to update the name for the specific user
     cur.execute("UPDATE pets SET name = ? WHERE user_id = ?", (new_name, user_id))
     
     if cur.rowcount == 0:
@@ -155,7 +152,6 @@ async def check_status(ctx):
     
     await ctx.send(embed=embed)
 
-
 @bot.command(name='feed')
 async def feed_pet(ctx):
     user_id = ctx.author.id
@@ -173,7 +169,6 @@ async def feed_pet(ctx):
         
     con.commit()
     con.close()
-
 
 @bot.command(name='play')
 async def play_with_pet(ctx):
@@ -201,7 +196,6 @@ async def play_with_pet(ctx):
     con.commit()
     con.close()
 
-
 @bot.command(name='clean')
 async def clean_pet(ctx):
     user_id = ctx.author.id
@@ -228,6 +222,7 @@ async def show_shop(ctx):
 
 @bot.command(name='buy')
 async def buy_item(ctx, *, item_id: str = None):
+    # ... (buy command is unchanged) ...
     if item_id is None:
         await ctx.send("You need to specify what to buy! Use `!buy <item_id>`.")
         return
@@ -276,6 +271,40 @@ async def buy_item(ctx, *, item_id: str = None):
 
     con.commit()
     con.close()
+
+# --- NEW COMMAND ---
+@bot.command(name='leaderboard', aliases=['lb'])
+async def show_leaderboard(ctx):
+    """Shows the top 10 richest pet owners."""
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+
+    # The SQL query to get the top 10 users, sorted by money
+    cur.execute("SELECT user_id, name, money FROM pets ORDER BY money DESC LIMIT 10")
+    top_users = cur.fetchall()
+    con.close()
+
+    if not top_users:
+        await ctx.send("There's no one on the leaderboard yet!")
+        return
+
+    embed = discord.Embed(title="💰 Top 10 Richest Pets", color=discord.Color.green())
+    
+    description = ""
+    for rank, user_data in enumerate(top_users, start=1):
+        # We need to fetch the Discord user object to get their current name
+        # This is an API call, so it can be slow if the leaderboard is long
+        user = bot.get_user(user_data['user_id'])
+        if user:
+            user_display_name = user.display_name
+        else:
+            user_display_name = "Unknown User" # If the user has left the server
+            
+        description += f"**{rank}.** {user_display_name}'s *{user_data['name']}* - {user_data['money']} Coins\n"
+
+    embed.description = description
+    await ctx.send(embed=embed)
 
 
 # --- Run the Bot ---
