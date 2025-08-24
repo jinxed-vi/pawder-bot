@@ -314,5 +314,5 @@ class PetCommands(commands.Cog):
 
 
 # This setup function is required for the cog to be loaded
-def setup(bot):
-    bot.add_cog(PetCommands(bot))
+async def setup(bot):
+    await bot.add_cog(PetCommands(bot))
