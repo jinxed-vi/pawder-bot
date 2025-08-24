@@ -40,6 +40,15 @@ def setup_database():
         if 'willpower' not in columns:
             # We add a default value of 100 for existing pets
             cur.execute("ALTER TABLE pets ADD COLUMN willpower INTEGER NOT NULL DEFAULT 100")
+        # Add the new 'last_play' column if it doesn't exist
+        if 'last_play' not in columns:
+            cur.execute("ALTER TABLE pets ADD COLUMN last_play TEXT")
+        # Add the new columns for feed and clean cooldowns
+        if 'last_feed' not in columns:
+            cur.execute("ALTER TABLE pets ADD COLUMN last_feed TEXT")
+        if 'last_clean' not in columns:
+            cur.execute("ALTER TABLE pets ADD COLUMN last_clean TEXT")
+
 
 def fetch_pet(user_id):
     """Fetches a single pet's data from the database."""

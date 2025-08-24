@@ -15,7 +15,25 @@ PRIZE_ITEMS = ("apple", "bread", "toy", "soap")
 class PetCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.stat_decay_loop.start() 
+        self.stat_decay_loop.start()
+        
+    def _get_pet_mood(self, pet):
+        """Determines a pet's mood based on its stats."""
+        # Calculate an average of the primary care stats
+        avg_stats = (pet['hunger'] + pet['happiness'] + pet['cleanliness']) / 3
+
+        if pet['willpower'] < 30 or avg_stats < 25:
+            return "Neglected 😥"
+        if pet['hunger'] < 40:
+            return "Starving 😫"
+        if pet['happiness'] < 40:
+            return "Gloomy 😞"
+        if pet['cleanliness'] < 40:
+            return "Grubby 😒"
+        if avg_stats < 85:
+            return "Content 😐"
+        
+        return "Joyful 😊"
 
     @tasks.loop(minutes=5)
     async def stat_decay_loop(self):
@@ -92,20 +110,21 @@ class PetCommands(commands.Cog):
                 await ctx.send(f"You've named your pet **{new_name}**! 🎉")
 
     @commands.command(name='status')
-    async def check_status(self, ctx ):
+    async def check_status(self, ctx):
         pet = fetch_pet(ctx.author.id)
-
         if not pet:
             await ctx.send("You don't have a pet yet! Type `!hatch` to get one.")
             return
 
         born_at = datetime.datetime.fromisoformat(pet['born_at'])
         age_delta = datetime.datetime.now() - born_at
-        total_seconds = int(age_delta.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
+        hours, remainder = divmod(int(age_delta.total_seconds()), 3600)
+        minutes, _ = divmod(remainder, 60)
+        
+        mood = self._get_pet_mood(pet)
         
         embed = discord.Embed(title=f"{pet['name']}'s Status", color=discord.Color.blue())
+        embed.add_field(name="🎭 Mood", value=mood, inline=True)
         embed.add_field(name="💪 Willpower", value=f"{pet['willpower']}/100", inline=True)
         embed.add_field(name="❤️ Happiness", value=f"{pet['happiness']}/100", inline=True)
         embed.add_field(name="🍔 Hunger", value=f"{pet['hunger']}/100", inline=True)
@@ -117,38 +136,89 @@ class PetCommands(commands.Cog):
     @commands.command(name='feed')
     async def feed_pet(self, ctx):
         user_id = ctx.author.id
-        new_hunger = modify_pet_stat(user_id, 'hunger', 15)
-        if new_hunger is None:
+        cooldown = datetime.timedelta(hours=1)
+
+        pet = fetch_pet(user_id)
+        if not pet:
             await ctx.send("You don't have a pet to feed!")
             return
             
+        last_fed_str = pet['last_feed']
+        if last_fed_str:
+            last_fed_time = datetime.datetime.fromisoformat(last_fed_str)
+            if datetime.datetime.now() - last_fed_time < cooldown:
+                time_remaining = cooldown - (datetime.datetime.now() - last_fed_time)
+                minutes, seconds = divmod(int(time_remaining.total_seconds()), 60)
+                await ctx.send(f"Your pet is still full. You can feed it again in **{minutes}m {seconds}s**.")
+                return
+
+        new_hunger = modify_pet_stat(user_id, 'hunger', 15)
         modify_pet_stat(user_id, 'willpower', 1)
+        
+        # Update the timestamp
+        with get_db_cursor() as cur:
+            cur.execute("UPDATE pets SET last_feed = ? WHERE user_id = ?", (datetime.datetime.now().isoformat(), user_id))
+        
         await ctx.send(f"You fed your pet! 🍔 Its hunger is now {new_hunger}/100.")
     
     @commands.command(name='play')
     async def play_with_pet(self, ctx):
         user_id = ctx.author.id
-        money_earned = random.randint(5, 15)
-
-        new_happiness = modify_pet_stat(user_id, 'happiness', 20)
-        if new_happiness is None:
+        cooldown = datetime.timedelta(hours=1)
+        
+        pet = fetch_pet(user_id)
+        if not pet:
             await ctx.send("You don't have a pet to play with!")
             return
 
+        last_played_str = pet['last_play']
+        if last_played_str:
+            last_played_time = datetime.datetime.fromisoformat(last_played_str)
+            time_since_play = datetime.datetime.now() - last_played_time
+            
+            if time_since_play < cooldown:
+                time_remaining = cooldown - time_since_play
+                minutes, seconds = divmod(int(time_remaining.total_seconds()), 60)
+                await ctx.send(f"Your pet is tired! You can play again in **{minutes}m {seconds}s**.")
+                return
+
+        money_earned = random.randint(5, 15)
+        new_happiness = modify_pet_stat(user_id, 'happiness', 20)
         modify_pet_stat(user_id, 'money', money_earned)
         modify_pet_stat(user_id, 'willpower', 1)
+        
+        with get_db_cursor() as cur:
+            cur.execute("UPDATE pets SET last_play = ? WHERE user_id = ?", (datetime.datetime.now().isoformat(), user_id))
+
         await ctx.send(f"You played with your pet! ❤️ Its happiness is now {new_happiness}/100. You also earned {money_earned} coins! 💰")
-    
+
     @commands.command(name='clean')
     async def clean_pet(self, ctx):
         user_id = ctx.author.id
-        # Use the new 'set' mode
-        result = modify_pet_stat(user_id, 'cleanliness', 100, mode='set')
-        if result is None:
+        cooldown = datetime.timedelta(hours=1)
+
+        pet = fetch_pet(user_id)
+        if not pet:
             await ctx.send("You don't have a pet to clean!")
-        else:
-            modify_pet_stat(user_id, 'willpower', 1)
-            await ctx.send("You cleaned your pet! ✨ It's sparkling clean now.")
+            return
+
+        last_cleaned_str = pet['last_clean']
+        if last_cleaned_str:
+            last_cleaned_time = datetime.datetime.fromisoformat(last_cleaned_str)
+            if datetime.datetime.now() - last_cleaned_time < cooldown:
+                time_remaining = cooldown - (datetime.datetime.now() - last_cleaned_time)
+                minutes, seconds = divmod(int(time_remaining.total_seconds()), 60)
+                await ctx.send(f"Your pet is already clean. You can clean it again in **{minutes}m {seconds}s**.")
+                return
+
+        modify_pet_stat(user_id, 'cleanliness', 100, mode='set')
+        modify_pet_stat(user_id, 'willpower', 1)
+
+        # Update the timestamp
+        with get_db_cursor() as cur:
+            cur.execute("UPDATE pets SET last_clean = ? WHERE user_id = ?", (datetime.datetime.now().isoformat(), user_id))
+            
+        await ctx.send("You cleaned your pet! ✨ It's sparkling clean now.")
 
     @commands.command(name='shop')
     async def show_shop(self, ctx ):
