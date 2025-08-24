@@ -6,35 +6,51 @@ import os
 from dotenv import load_dotenv
 import sqlite3
 
+from collections import Counter # We'll use this to count items in the inventory
+
 load_dotenv()
 
 # --- Database Setup ---
 DB_FILE = "pets.db"
 
 def setup_database():
+    """Sets up the database, creating and updating tables as needed."""
     con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
+    
+    # Create the 'pets' table if it doesn't exist
     cur.execute('''
         CREATE TABLE IF NOT EXISTS pets (
-            user_id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            born_at TEXT NOT NULL,
-            hunger INTEGER NOT NULL,
-            happiness INTEGER NOT NULL,
-            cleanliness INTEGER NOT NULL,
-            money INTEGER NOT NULL
+            user_id INTEGER PRIMARY KEY, name TEXT NOT NULL, born_at TEXT NOT NULL,
+            hunger INTEGER NOT NULL, happiness INTEGER NOT NULL, cleanliness INTEGER NOT NULL,
+            money INTEGER NOT NULL, last_prize TEXT
         )
     ''')
+    
+    # Create the new 'inventory' table
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL,
+            item_id TEXT NOT NULL
+        )
+    ''')
+
+    # --- Schema migration for existing users ---
+    cur.execute("PRAGMA table_info(pets)")
+    columns = [column[1] for column in cur.fetchall()]
+    if 'last_prize' not in columns:
+        cur.execute("ALTER TABLE pets ADD COLUMN last_prize TEXT")
+
     con.commit()
     con.close()
 
-# --- Bot Setup ---
+# --- Bot Setup & Shop ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- Shop ---
 SHOP_ITEMS = {
     "apple": {
         "name": "Apple 🍎", "price": 10, "description": "Restores 25 hunger.",
@@ -53,6 +69,9 @@ SHOP_ITEMS = {
         "effect": {"stat": "cleanliness", "value": 50}
     }
 }
+
+# The list of item IDs that can be won from !prize
+PRIZE_ITEMS = ("apple", "bread", "toy", "soap")
 
 # --- Background Task ---
 @tasks.loop(minutes=5)
@@ -90,8 +109,8 @@ async def hatch_pet(ctx):
     if cur.fetchone():
         await ctx.send("You already have a pet!")
     else:
-        cur.execute("INSERT INTO pets VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (user_id, 'Pet', datetime.datetime.now().isoformat(), 100, 100, 100, 10))
+        cur.execute("INSERT INTO pets VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, 'Pet', datetime.datetime.now().isoformat(), 100, 100, 100, 10, ""))
         await ctx.send(f"Congratulations, {ctx.author.display_name}! You've hatched a new virtual pet! 🎉 Use `!name <pet_name>` to give it a name!")
     
     con.commit()
@@ -221,8 +240,8 @@ async def show_shop(ctx):
 
 
 @bot.command(name='buy')
-async def buy_item(ctx, *, item_id: str = None):
-    # ... (buy command is unchanged) ...
+async def buy_item(ctx, item_id: str = None):
+    """Buys an item from the shop and adds it to your inventory."""
     if item_id is None:
         await ctx.send("You need to specify what to buy! Use `!buy <item_id>`.")
         return
@@ -252,23 +271,135 @@ async def buy_item(ctx, *, item_id: str = None):
         con.close()
         return
 
+    # Subtract money and add item to inventory
     new_money = pet['money'] - item['price']
-    stat_to_change = item['effect']['stat']
-    value_to_add = item['effect']['value']
+    cur.execute("UPDATE pets SET money = ? WHERE user_id = ?", (new_money, user_id))
+    cur.execute("INSERT INTO inventory (owner_id, item_id) VALUES (?, ?)", (user_id, item_id))
     
-    cur.execute(f'''
-        UPDATE pets
-        SET
-            money = ?,
-            {stat_to_change} = MIN(100, {stat_to_change} + ?)
-        WHERE user_id = ?
-    ''', (new_money, value_to_add, user_id))
+    await ctx.send(f"You bought a {item['name']}! It has been added to your inventory. Use `!use {item_id}` to use it.")
+
+    con.commit()
+    con.close()
+
+@bot.command(name='inventory', aliases=['inv'])
+async def show_inventory(ctx):
+    """Shows the items in your inventory."""
+    user_id = ctx.author.id
+    con = sqlite3.connect(DB_FILE)
+    cur = con.cursor()
+    
+    cur.execute("SELECT item_id FROM inventory WHERE owner_id = ?", (user_id,))
+    # fetchall() returns a list of tuples, e.g., [('apple',), ('apple',), ('toy',)]
+    items_in_db = cur.fetchall()
+    con.close()
+    
+    if not items_in_db:
+        await ctx.send("Your inventory is empty. Buy items from the `!shop`!")
+        return
+        
+    # We extract the first element from each tuple to get a simple list of item IDs
+    item_ids = [item[0] for item in items_in_db]
+    # Counter creates a dictionary-like object with counts, e.g., {'apple': 2, 'toy': 1}
+    item_counts = Counter(item_ids)
+    
+    embed = discord.Embed(title=f"{ctx.author.display_name}'s Inventory", color=discord.Color.orange())
+    
+    description = ""
+    for item_id, count in item_counts.items():
+        item_details = SHOP_ITEMS[item_id]
+        description += f"{item_details['name']} **x{count}**\n"
+        
+    embed.description = description
+    await ctx.send(embed=embed)
+
+
+@bot.command(name='use')
+async def use_item(ctx, item_id: str = None):
+    """Uses an item from your inventory."""
+    if item_id is None:
+        await ctx.send("You need to specify what to use! Usage: `!use <item_id>`")
+        return
+
+    item_id = item_id.lower()
+    if item_id not in SHOP_ITEMS:
+        await ctx.send("That's not a valid item.")
+        return
+
+    user_id = ctx.author.id
+    item_effect = SHOP_ITEMS[item_id]['effect']
+    
+    con = sqlite3.connect(DB_FILE)
+    cur = con.cursor()
+    
+    # Check if the user has the item
+    cur.execute("SELECT entry_id FROM inventory WHERE owner_id = ? AND item_id = ?", (user_id, item_id))
+    item_to_use = cur.fetchone()
+    
+    if not item_to_use:
+        await ctx.send(f"You don't have a {SHOP_ITEMS[item_id]['name']} in your inventory.")
+        con.close()
+        return
+
+    # Apply the effect
+    stat_to_change = item_effect['stat']
+    value_to_add = item_effect['value']
+    
+    cur.execute(f"UPDATE pets SET {stat_to_change} = MIN(100, {stat_to_change} + ?) WHERE user_id = ?", (value_to_add, user_id))
+    
+    # Remove the item from inventory (using its unique entry_id)
+    cur.execute("DELETE FROM inventory WHERE entry_id = ?", (item_to_use[0],))
     
     cur.execute(f"SELECT {stat_to_change} FROM pets WHERE user_id = ?", (user_id,))
     new_stat_value = cur.fetchone()[0]
 
-    await ctx.send(f"You bought a {item['name']}! Your pet's {stat_to_change} is now {new_stat_value}/100.")
+    await ctx.send(f"You used a {SHOP_ITEMS[item_id]['name']}! Your pet's {stat_to_change} is now {new_stat_value}/100.")
+    
+    con.commit()
+    con.close()
 
+@bot.command(name='prize')
+async def claim_prize(ctx):
+    """Claims a daily prize of a random item."""
+    user_id = ctx.author.id
+    cooldown = datetime.timedelta(hours=24)
+    
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    
+    cur.execute("SELECT last_prize FROM pets WHERE user_id = ?", (user_id,))
+    pet_data = cur.fetchone()
+    
+    if not pet_data:
+        await ctx.send("You need to `!hatch` a pet before claiming a prize.")
+        con.close()
+        return
+
+    last_claimed_str = pet_data['last_prize']
+    
+    if last_claimed_str:
+        last_claimed_time = datetime.datetime.fromisoformat(last_claimed_str)
+        time_since_claim = datetime.datetime.now() - last_claimed_time
+        
+        if time_since_claim < cooldown:
+            time_remaining = cooldown - time_since_claim
+            hours, remainder = divmod(int(time_remaining.total_seconds()), 3600)
+            minutes, _ = divmod(remainder, 60)
+            await ctx.send(f"You've already claimed your prize. Please wait **{hours}h {minutes}m**.")
+            con.close()
+            return
+
+    # If cooldown is over, grant a random item prize
+    won_item_id = random.choice(PRIZE_ITEMS)
+    item_details = SHOP_ITEMS[won_item_id]
+    current_time_str = datetime.datetime.now().isoformat()
+    
+    # Add the item to inventory and update the prize timestamp
+    cur.execute("INSERT INTO inventory (owner_id, item_id) VALUES (?, ?)", (user_id, won_item_id))
+    cur.execute("UPDATE pets SET last_prize = ? WHERE user_id = ?", (current_time_str, user_id))
+    
+    await ctx.send(f"You claimed your daily prize and received a {item_details['name']}! It's now in your inventory.")
+    
     con.commit()
     con.close()
 
