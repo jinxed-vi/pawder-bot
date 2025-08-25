@@ -11,17 +11,36 @@ from database import setup_database
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
 
-# Set up the bot
+class MyHelpCommand(commands.HelpCommand):
+    async def send_bot_help(self, mapping):
+        embed = discord.Embed(
+            title="Pawder Bot Help", 
+            description="Here are all the available commands, grouped by category.",
+            color=discord.Color.blurple()
+        )
+        
+        for cog, cog_commands in mapping.items():
+            if cog:
+                filtered_commands = await self.filter_commands(cog_commands)
+                if filtered_commands:
+                    command_signatures = [f"`!{c.name}` - {c.short_doc}" for c in filtered_commands]
+                    embed.add_field(
+                        name=cog.qualified_name,
+                        value="\n".join(command_signatures),
+                        inline=False
+                    )
+
+        embed.set_footer(text="Use !help <command> for more info on a specific command.")
+        await self.get_destination().send(embed=embed)
+
 class PetBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
-        super().__init__(command_prefix='!', intents=intents)
+        super().__init__(command_prefix='!', intents=intents, help_command=MyHelpCommand())
 
-    # This is the new, correct way to load cogs
     async def setup_hook(self):
-        # This loop automatically finds and loads all cog files
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
                 await self.load_extension(f'cogs.{filename[:-3]}')

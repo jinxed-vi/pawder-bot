@@ -1,0 +1,9 @@
+version: '3.9'
+
+services:
+  pawder-bot:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    environment:
+      - TOKEN=${TOKEN}

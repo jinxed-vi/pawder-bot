@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from database import get_db_cursor, fetch_shop_item
 
-class AdminCommands(commands.Cog):
+class AdminCommands(commands.Cog, name="👮‍♀️ Admin Commands"):
     def __init__(self, bot):
         self.bot = bot
 

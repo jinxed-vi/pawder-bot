@@ -30,7 +30,8 @@ def setup_database():
             CREATE TABLE IF NOT EXISTS pets (
                 user_id INTEGER PRIMARY KEY, name TEXT NOT NULL, born_at TEXT NOT NULL,
                 hunger INTEGER NOT NULL, happiness INTEGER NOT NULL, cleanliness INTEGER NOT NULL,
-                money INTEGER NOT NULL, last_prize TEXT
+                money INTEGER NOT NULL, last_prize TEXT, willpower INTEGER NOT NULL DEFAULT 100,
+                last_play TEXT, last_feed TEXT, last_clean TEXT
             )
         ''')
         cur.execute('''
@@ -53,34 +54,10 @@ def setup_database():
         if cur.fetchone()[0] == 0:
             print("Shop table is empty, populating with initial items...")
             for item_id, details in INITIAL_SHOP_ITEMS.items():
-                cur.execute("INSERT INTO shop VALUES (?, ?, ?, ?, ?, ?)",
+                cur.execute("INSERT INTO shop VALUES (?, ?, ?, ?, ?, ?, 1)",
                             (item_id, details['name'], details['price'], details['description'], 
                              details['effect_stat'], details['effect_value']))
         
-        # --- Schema migration ---
-        cur.execute("PRAGMA table_info(shop)")
-        columns = [column[1] for column in cur.fetchall()]
-        if 'is_visible' not in columns:
-            cur.execute("ALTER TABLE shop ADD COLUMN is_visible INTEGER NOT NULL DEFAULT 1")
-        
-        cur.execute("PRAGMA table_info(pets)")
-        columns = [column[1] for column in cur.fetchall()]
-        if 'last_prize' not in columns:
-            cur.execute("ALTER TABLE pets ADD COLUMN last_prize TEXT")
-            # Add the new willpower column if it doesn't exist
-        if 'willpower' not in columns:
-            # We add a default value of 100 for existing pets
-            cur.execute("ALTER TABLE pets ADD COLUMN willpower INTEGER NOT NULL DEFAULT 100")
-        # Add the new 'last_play' column if it doesn't exist
-        if 'last_play' not in columns:
-            cur.execute("ALTER TABLE pets ADD COLUMN last_play TEXT")
-        # Add the new columns for feed and clean cooldowns
-        if 'last_feed' not in columns:
-            cur.execute("ALTER TABLE pets ADD COLUMN last_feed TEXT")
-        if 'last_clean' not in columns:
-            cur.execute("ALTER TABLE pets ADD COLUMN last_clean TEXT")
-            
-
 def fetch_pet(user_id):
     """Fetches a single pet's data from the database."""
     with get_db_cursor() as cur:

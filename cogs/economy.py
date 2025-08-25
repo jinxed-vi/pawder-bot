@@ -4,7 +4,7 @@ import datetime
 import random
 from database import get_db_cursor, fetch_pet, modify_pet_stat, fetch_all_shop_items, fetch_shop_item
 
-class EconomyCommands(commands.Cog):
+class EconomyCommands(commands.Cog, name="📈 Economy Commands"):
     def __init__(self, bot):
         self.bot = bot
 

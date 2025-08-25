@@ -5,7 +5,7 @@ from discord.ext import commands, tasks
 import datetime
 from database import fetch_shop_item, get_db_cursor, fetch_pet, modify_pet_stat
 
-class PetCommands(commands.Cog):
+class PetCommands(commands.Cog, name="🐶 Pet Commands"):
     def __init__(self, bot):
         self.bot = bot
         self.stat_decay_loop.start()
@@ -72,6 +72,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='hatch')
     async def hatch_pet(self, ctx):
+        """Hatches a new pet."""
         user_id = ctx.author.id
         with get_db_cursor() as cur:
             cur.execute("SELECT user_id FROM pets WHERE user_id = ?", (user_id,))
@@ -84,6 +85,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='name')
     async def name_pet(self, ctx, *, new_name: str = None):
+        """Gives your pet a name."""
         user_id = ctx.author.id
         
         if new_name is None:
@@ -104,6 +106,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='status')
     async def check_status(self, ctx):
+        """Checks your pet's current status."""
         pet = fetch_pet(ctx.author.id)
         if not pet:
             await ctx.send("You don't have a pet yet! Type `!hatch` to get one.")
@@ -128,6 +131,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='feed')
     async def feed_pet(self, ctx):
+        """Feeds your pet to restore hunger."""
         user_id = ctx.author.id
         cooldown = datetime.timedelta(hours=1)
 
@@ -156,6 +160,7 @@ class PetCommands(commands.Cog):
     
     @commands.command(name='play')
     async def play_with_pet(self, ctx):
+        """Plays with your pet to restore happiness and earn coins."""
         user_id = ctx.author.id
         cooldown = datetime.timedelta(hours=1)
         
@@ -187,6 +192,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='clean')
     async def clean_pet(self, ctx):
+        """Cleans your pet to restore cleanliness."""
         user_id = ctx.author.id
         cooldown = datetime.timedelta(hours=1)
 
@@ -215,7 +221,7 @@ class PetCommands(commands.Cog):
 
     @commands.command(name='inventory', aliases=['inv'])
     async def show_inventory(self, ctx ):
-        """Shows the items in your inventory."""
+        """Displays the items in your inventory."""
         user_id = ctx.author.id
         with get_db_cursor() as cur:
             cur.execute("SELECT item_id FROM inventory WHERE owner_id = ?", (user_id,))
