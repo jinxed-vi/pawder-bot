@@ -32,6 +32,26 @@ class MyHelpCommand(commands.HelpCommand):
 
         embed.set_footer(text="Use !help <command> for more info on a specific command.")
         await self.get_destination().send(embed=embed)
+    
+    async def send_command_help(self, command):
+        """Creates the help message for a specific command."""
+        embed = discord.Embed(
+            title=f"Help: `!{command.name}`",
+            # The command.help attribute pulls the entire docstring
+            description=command.help or "No detailed description available.",
+            color=discord.Color.green()
+        )
+        
+        # Shows how to use the command, including its parameters
+        usage = f"!{command.name} {command.signature}"
+        embed.add_field(name="Usage", value=f"```{usage}```", inline=False)
+        
+        # Shows any alternative names for the command
+        if command.aliases:
+            alias_str = ", ".join([f"`!{alias}`" for alias in command.aliases])
+            embed.add_field(name="Aliases", value=alias_str, inline=False)
+        
+        await self.get_destination().send(embed=embed)
 
 class PetBot(commands.Bot):
     def __init__(self):

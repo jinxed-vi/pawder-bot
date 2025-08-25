@@ -55,7 +55,13 @@ class AdminCommands(commands.Cog, name="👮‍♀️ Admin Commands"):
     @commands.command(name='addshopitem')
     @commands.is_owner()
     async def add_shop_item(self, ctx, item_id: str, price: int, effect_stat: str, effect_value: int, name: str, is_visible: int, *, description: str):
-        """(Admin) Adds/updates an item. Set visibility with '| visible=false' at the end."""
+        """(Admin) Adds/updates an item.
+        
+        **Example**:
+        ```
+        !addshopitem PowPowTreat 5 happiness 10 "Pow's Perfect Treats 🍬" 1 Powder loves these things! a wonderful snack that makes any pup's tail wag
+        ```
+        """
         item_id = item_id.lower()
         valid_stats = ['hunger', 'happiness', 'cleanliness', 'willpower']
         if effect_stat not in valid_stats:
