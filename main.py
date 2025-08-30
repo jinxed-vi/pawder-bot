@@ -1,4 +1,5 @@
 # main.py
+import traceback
 import discord
 from discord.ext import commands
 import os
@@ -67,10 +68,30 @@ class PetBot(commands.Bot):
                 print(f"Loaded cog: {filename}")
 
     async def on_ready(self):
+        if not self.user:
+            raise RuntimeError("Failed to log in. Shutting down...")
         print(f'Logged in as {self.user.name}')
         print(f'Bot is ready and running in {len(self.guilds)} servers.')
         print('--------------------------------')
+        
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        embed = discord.Embed(title="Error")
+        if isinstance(error, commands.MissingRequiredArgument):
+            embed.title = ":x: Error: missing required argument"
+            embed.description = f"{error}"
+        if isinstance(error, commands.NotOwner):
+            embed.title = ":x: Error: missing permissions"
+            embed.description = "You do not have permission to use this command."
+        else:
+            embed.title= ":x: Unexpected error"
+            embed.description = """
+            An unexpected error occurred.
+            """
+            print(f"An unhandled error occurred: {error}")
+        await ctx.send(embed=embed)
 
 bot = PetBot()
 setup_database()
+if not TOKEN:
+    raise RuntimeError("Please provide a valid discord bot token")
 bot.run(TOKEN)
